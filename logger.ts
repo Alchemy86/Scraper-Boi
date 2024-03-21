@@ -1,10 +1,13 @@
-// logger.ts
+import winston from "winston";
 
-export default {
-    Info(message: string) {
-        console.log(`INFO: ${message}`);
-    },
-    Error(message: string) {
-        console.error(`ERROR: ${message}`);
-    }
-};
+const logger = winston.createLogger({
+  level: "info",
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  defaultMeta: { service: "scraper-boi" },
+  transports: [new winston.transports.Console()],
+});
+
+export default logger;
