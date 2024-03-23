@@ -8,12 +8,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 const client_sqs_1 = require("@aws-sdk/client-sqs");
-const logger_1 = __importDefault(require("./logger"));
 const client = new client_sqs_1.SQSClient({ region: "eu-west-2" });
 const queueURL = process.env.QUEUE_URL;
 function publishChunk(chunk) {
@@ -22,7 +18,6 @@ function publishChunk(chunk) {
             QueueUrl: queueURL,
             Entries: chunk
         });
-        logger_1.default.info(`Chunking: ${JSON.stringify(chunk)}`);
         yield client.send(command);
     });
 }

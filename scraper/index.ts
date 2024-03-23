@@ -2,17 +2,71 @@ import { ElementHandle, Page, chromium } from 'playwright';
 import logger from './logger'; // Adjust the path as necessary
 import queue from './sqs';
 
+interface AttributeMap {
+    [key: string]: string;
+  }
+
+const addPageInterceptors = async (page : Page) => {
+    await page.route("**/*", (route)=> {
+        const request = route.request();
+        const resourceType = request.resourceType();
+        if (
+            resourceType === "image" ||
+            resourceType === "font" ||
+            resourceType === "stlyesheet" ||
+            resourceType === "script" ||
+            resourceType === "media" ||
+            resourceType === "image"
+        ){
+            route.abort();
+        } else{
+            route.continue();
+        }
+    });
+}
+
+const getAttributes = async (handle: ElementHandle<HTMLElement | SVGElement> | null | undefined) =>
+  handle?.evaluate((element: HTMLElement) => {
+    const attributeMap: AttributeMap = {};
+    for (const attr of element.attributes) {
+      attributeMap[attr.name] = attr.value;
+    }
+    return attributeMap;
+  });
+
+async function getdataForPosts(posts: any[]) : Promise<any[]>{
+    return await Promise.all(
+        posts.map(async (post) => {
+            const browser = await chromium.launch({
+                headless: false
+            });
+        
+            const context = await browser.newContext();
+            const page = await context.newPage();
+            addPageInterceptors(page);
+
+            const data = await getPostdata({ page, post });
+            await browser.close();
+            return data;
+        })
+    )
+}
+
 async function parseComment(e: ElementHandle<HTMLElement | SVGElement> | null) {
     const things = await e?.$$("> .sitetable > .thing");
 
     let comments: any[] = [];
     if (things) {
         for (const thing of things) {
-            let thingClass = await thing.getAttribute("class");
+            const attributes = await getAttributes(thing);
+            if (!attributes){
+                return;
+            }
+            let thingClass = attributes["class"];
             let children = await parseComment(await thing?.$(".child")); // Add ? before calling .$
             let isCollapsed = thingClass?.includes("collapsed");
             let isDeleted = thingClass?.includes("deleted");
-            let author = isDeleted ? "" : await thing?.getAttribute("data-author");
+            let author = isDeleted ? "" : attributes["data-author"];
 
             //let time = await thing.$eval("time", (el) => el.getAttribute("datetime"));
 
@@ -43,10 +97,17 @@ async function getPostdata({ page, post }: { page: Page; post: any }) {
 
     let id = post.id;
     let subreddit = post.subreddit;
-    let dataType = await thing?.getAttribute("data-type"); // Corrected line
-    let dataURL = await thing?.getAttribute("data-url");
-    let isPromoted = (await thing?.getAttribute("data-promoted")) === "true";
-    let isGallery = (await thing?.getAttribute("data-gallery")) === "true";
+
+    const attributes = await getAttributes(thing);
+
+    if(!attributes){
+        return;
+    }
+
+    let dataType = attributes["data-type"];
+    let dataURL = attributes["data-url"];
+    let isPromoted = attributes["data-promoted"] === "true";
+    let isGallery = attributes["data-gallery"] === "true";
 
     //let title = await page.$eval("a.title", (el) => el.textContent);
     let title = await page.$eval('title', (element) => element.textContent);
@@ -57,9 +118,19 @@ async function getPostdata({ page, post }: { page: Page; post: any }) {
     let textElement = await sitetable?.$("div.usertext-body");
     let text = textElement ? await textElement.innerText() : "";
 
-    var moo = await page.$("div.commentarea");
-
-    let comments = await parseComment(await page.$("div.commentarea"));
+    let comments: any[] = [];
+    try {
+        const commentArea = await page.$("div.commentarea");
+        if (commentArea) {
+            const parsedComments = await parseComment(commentArea);
+            if (parsedComments) {
+                comments = parsedComments;
+            }
+        }
+    } catch (e) {
+        logger.error("error parsing comments", { error: e });
+    }
+    
 
     return {
         id,
@@ -72,7 +143,9 @@ async function getPostdata({ page, post }: { page: Page; post: any }) {
         timestamp: post.timestamp,
         author: post.author,
         url: post.url,
-        points
+        points,
+        text,
+        comments
     };
 }
 
@@ -83,18 +156,23 @@ async function getPostsOnPage(page: Page) : Promise<any[]> {
     let posts: any[] = [];
 
     for(const element of elements) {
-        const id = await element.getAttribute("data-fullname");
-        const subreddit = await element.getAttribute("data-subreddit-prefixed");
+        const attributes = await getAttributes(element);
+        if(!attributes){
+            continue;
+        }
 
-        const time = await element.getAttribute("data-timestamp");
+        const id = attributes["data-fullname"];
+        const subreddit = attributes["data-subreddit-prefixed"];
+
+        const time = attributes["data-timestamp"];
 
         if (time === null) {
             continue;
         }
 
         const timestamp = new Date(time);
-        const author = await element.getAttribute("data-author");
-        const url = `https://old.reddit.com${await element.getAttribute("data-permalink")}`;
+        const author = attributes["data-author"];
+        const url = `https://old.reddit.com${attributes["data-permalink"]}`;
 
         posts.push({ id, subreddit, timestamp, author, url });
 
@@ -111,6 +189,7 @@ async function main() {
 
     const context = await browser.newContext();
     const page = await context.newPage();
+    addPageInterceptors(page);
 
     await page.goto("https://old.reddit.com/r/programming/new/");
     logger.info("connected"); // Using the logger module
@@ -142,12 +221,7 @@ async function main() {
 
     }
 
-    let data: any[] = [];
-
-    for (const post of posts) {
-        let postData = await getPostdata({ post, page });
-        data.push(postData);
-    }
+    const data = await getdataForPosts(posts);
 
     const nowStr = new Date().toISOString();
 

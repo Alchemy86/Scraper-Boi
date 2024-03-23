@@ -15,17 +15,62 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const playwright_1 = require("playwright");
 const logger_1 = __importDefault(require("./logger")); // Adjust the path as necessary
 const sqs_1 = __importDefault(require("./sqs"));
+const addPageInterceptors = (page) => __awaiter(void 0, void 0, void 0, function* () {
+    yield page.route("**/*", (route) => {
+        const request = route.request();
+        const resourceType = request.resourceType();
+        if (resourceType === "image" ||
+            resourceType === "font" ||
+            resourceType === "stlyesheet" ||
+            resourceType === "script" ||
+            resourceType === "media" ||
+            resourceType === "image") {
+            route.abort();
+        }
+        else {
+            route.continue();
+        }
+    });
+});
+const getAttributes = (handle) => __awaiter(void 0, void 0, void 0, function* () {
+    return handle === null || handle === void 0 ? void 0 : handle.evaluate((element) => {
+        const attributeMap = {};
+        for (const attr of element.attributes) {
+            attributeMap[attr.name] = attr.value;
+        }
+        return attributeMap;
+    });
+});
+function getdataForPosts(posts) {
+    return __awaiter(this, void 0, void 0, function* () {
+        return yield Promise.all(posts.map((post) => __awaiter(this, void 0, void 0, function* () {
+            const browser = yield playwright_1.chromium.launch({
+                headless: false
+            });
+            const context = yield browser.newContext();
+            const page = yield context.newPage();
+            addPageInterceptors(page);
+            const data = yield getPostdata({ page, post });
+            yield browser.close();
+            return data;
+        })));
+    });
+}
 function parseComment(e) {
     return __awaiter(this, void 0, void 0, function* () {
         const things = yield (e === null || e === void 0 ? void 0 : e.$$("> .sitetable > .thing"));
         let comments = [];
         if (things) {
             for (const thing of things) {
-                let thingClass = yield thing.getAttribute("class");
+                const attributes = yield getAttributes(thing);
+                if (!attributes) {
+                    return;
+                }
+                let thingClass = attributes["class"];
                 let children = yield parseComment(yield (thing === null || thing === void 0 ? void 0 : thing.$(".child"))); // Add ? before calling .$
                 let isCollapsed = thingClass === null || thingClass === void 0 ? void 0 : thingClass.includes("collapsed");
                 let isDeleted = thingClass === null || thingClass === void 0 ? void 0 : thingClass.includes("deleted");
-                let author = isDeleted ? "" : yield (thing === null || thing === void 0 ? void 0 : thing.getAttribute("data-author"));
+                let author = isDeleted ? "" : attributes["data-author"];
                 //let time = await thing.$eval("time", (el) => el.getAttribute("datetime"));
                 let time = "";
                 const timeElement = yield (thing === null || thing === void 0 ? void 0 : thing.$("time"));
@@ -48,18 +93,33 @@ function getPostdata({ page, post }) {
         const thing = yield (sitetable === null || sitetable === void 0 ? void 0 : sitetable.$(".thing"));
         let id = post.id;
         let subreddit = post.subreddit;
-        let dataType = yield (thing === null || thing === void 0 ? void 0 : thing.getAttribute("data-type")); // Corrected line
-        let dataURL = yield (thing === null || thing === void 0 ? void 0 : thing.getAttribute("data-url"));
-        let isPromoted = (yield (thing === null || thing === void 0 ? void 0 : thing.getAttribute("data-promoted"))) === "true";
-        let isGallery = (yield (thing === null || thing === void 0 ? void 0 : thing.getAttribute("data-gallery"))) === "true";
+        const attributes = yield getAttributes(thing);
+        if (!attributes) {
+            return;
+        }
+        let dataType = attributes["data-type"];
+        let dataURL = attributes["data-url"];
+        let isPromoted = attributes["data-promoted"] === "true";
+        let isGallery = attributes["data-gallery"] === "true";
         //let title = await page.$eval("a.title", (el) => el.textContent);
         let title = yield page.$eval('title', (element) => element.textContent);
         let pointsElement = yield (sitetable === null || sitetable === void 0 ? void 0 : sitetable.$(".score.unvoted"));
         let points = pointsElement ? parseInt(yield pointsElement.innerText()) : 0;
         let textElement = yield (sitetable === null || sitetable === void 0 ? void 0 : sitetable.$("div.usertext-body"));
         let text = textElement ? yield textElement.innerText() : "";
-        var moo = yield page.$("div.commentarea");
-        let comments = yield parseComment(yield page.$("div.commentarea"));
+        let comments = [];
+        try {
+            const commentArea = yield page.$("div.commentarea");
+            if (commentArea) {
+                const parsedComments = yield parseComment(commentArea);
+                if (parsedComments) {
+                    comments = parsedComments;
+                }
+            }
+        }
+        catch (e) {
+            logger_1.default.error("error parsing comments", { error: e });
+        }
         return {
             id,
             subreddit,
@@ -71,7 +131,9 @@ function getPostdata({ page, post }) {
             timestamp: post.timestamp,
             author: post.author,
             url: post.url,
-            points
+            points,
+            text,
+            comments
         };
     });
 }
@@ -81,15 +143,19 @@ function getPostsOnPage(page) {
         const elements = yield page.$$(".thing");
         let posts = [];
         for (const element of elements) {
-            const id = yield element.getAttribute("data-fullname");
-            const subreddit = yield element.getAttribute("data-subreddit-prefixed");
-            const time = yield element.getAttribute("data-timestamp");
+            const attributes = yield getAttributes(element);
+            if (!attributes) {
+                continue;
+            }
+            const id = attributes["data-fullname"];
+            const subreddit = attributes["data-subreddit-prefixed"];
+            const time = attributes["data-timestamp"];
             if (time === null) {
                 continue;
             }
             const timestamp = new Date(time);
-            const author = yield element.getAttribute("data-author");
-            const url = `https://old.reddit.com${yield element.getAttribute("data-permalink")}`;
+            const author = attributes["data-author"];
+            const url = `https://old.reddit.com${attributes["data-permalink"]}`;
             posts.push({ id, subreddit, timestamp, author, url });
         }
         return posts;
@@ -102,6 +168,7 @@ function main() {
         });
         const context = yield browser.newContext();
         const page = yield context.newPage();
+        addPageInterceptors(page);
         yield page.goto("https://old.reddit.com/r/programming/new/");
         logger_1.default.info("connected"); // Using the logger module
         let hour = 1000 * 60 * 60;
@@ -123,15 +190,10 @@ function main() {
             let nextPageUrl = yield page.$eval(".next-button a", (el) => el.href);
             yield page.goto(nextPageUrl);
         }
-        let data = [];
-        for (const post of posts) {
-            let postData = yield getPostdata({ post, page });
-            data.push(postData);
-        }
+        const data = yield getdataForPosts(posts);
         const nowStr = new Date().toISOString();
         // Log data to the queue for processing
         var dataToLog = data.map((post) => (Object.assign(Object.assign({}, post), { scrapedAt: nowStr })));
-        logger_1.default.info(`DATA: WE HAVE: ${data.length} ${JSON.stringify(dataToLog)}`);
         yield sqs_1.default.publish(dataToLog);
         logger_1.default.info(`Found ${posts.length} posts`);
         yield browser.close();
