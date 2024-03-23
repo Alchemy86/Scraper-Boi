@@ -1,6 +1,8 @@
 import { ElementHandle, Page, chromium } from 'playwright';
 import logger from './logger'; // Adjust the path as necessary
 import queue from './sqs';
+import { APIGatewayProxyEvent, Context, APIGatewayProxyResult } from 'aws-lambda'; // Import types from aws-lambda package
+
 
 interface AttributeMap {
     [key: string]: string;
@@ -203,7 +205,12 @@ async function main() {
     let posts: any[] = [];
     
     while (cutoff < earliest) {
-        let pagePosts = await getPostsOnPage(page);
+        let pagePosts = await getPostsOnPage(page);browser
+        browser
+        browser
+        browser
+        browser
+        browser
         if (pagePosts.length == 0){
             break;
         }
@@ -238,3 +245,16 @@ async function main() {
 if (require.main === module) {
     main();
 }
+
+// aws register
+exports.handler = async function (event: APIGatewayProxyEvent, context: Context): Promise<APIGatewayProxyResult> {
+    try {
+        await main();
+    } catch (e) {
+        // Catch all errors so that the function doesn't retry
+        console.log(e);
+        logger.error("error scraping", { error: e });
+        return { statusCode: 500, body: JSON.stringify({ success: false }) }; // Returning APIGatewayProxyResult
+    }
+    return { statusCode: 200, body: JSON.stringify({ success: true }) }; // Returning APIGatewayProxyResult
+};
