@@ -56,3 +56,5 @@ node index.js
 ```
 
 This will then run.
+
+![image](https://github.com/Alchemy86/Scraper-Boi/assets/9347697/9e891fd5-dc15-4b60-9d79-a0884a1e7275)
