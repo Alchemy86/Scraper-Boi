@@ -1,4 +1,4 @@
-# Your Project Name
+# Playwright Example Boi
 
 Short description or introduction to your project.
 
